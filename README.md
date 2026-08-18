@@ -1,4 +1,4 @@
-# Beyond Python's Backend
+# Rust Among Giants
 
 ## An Empirical Comparison of Programming Languages for High-Performance AI Infrastructure
 ### Two suites: 9 systems languages × 8 benchmarks, and an AI-kernel suite × 5 benchmarks across a 12-language scientific superset
@@ -20,28 +20,6 @@ The performance of Tier 1 (Python) is not the question — it is well-establishe
 
 This project benchmarks **nine candidate systems languages** for the Tier-2 role across eight systems workloads, and adds a second **AI-kernel suite** (five from-scratch numerical algorithms) implemented across a scientific superset that also includes Fortran, Python, and R. (An earlier draft carried COBOL as a tenth systems language; it has since been retired — see *Two benchmark suites* below.)
 
----
-
-## Why exclude Python?
-
-> **Scope note:** Python is excluded from the *systems* suite (b1–b8) for the reason below. It **is** included in the *AI-kernel* suite as a deliberately pure-scalar reference point, to quantify the orchestration-tier cost on the same numerical kernels.
-
-
-Python's role in AI/ML is increasingly as a **glue language**. The performance-critical code runs in compiled or JIT-compiled languages bound through FFI:
-
-| Project | Frontend | Backend (Tier 2) |
-|---------|----------|------------------|
-| PyTorch | Python | C++/CUDA |
-| HuggingFace Tokenizers | Python | **Rust** |
-| Polars | Python | **Rust** |
-| NumPy | Python | C |
-| JAX | Python | C++/XLA |
-| vLLM | Python | C++/CUDA |
-| scikit-learn | Python | C/Cython |
-
-This paper takes the Tier-1 choice (Python) as given and asks: **for the Tier-2 layer, which language wins?** Including Python as a benchmark subject would conflate the orchestration tier with the compute tier and obscure the contested comparison.
-
-Where directly relevant — implications for AI infrastructure decisions — we cite prior work establishing Python's performance band rather than re-measuring a well-known result.
 
 ---
 
