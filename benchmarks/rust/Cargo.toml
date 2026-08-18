@@ -1,0 +1,55 @@
+[package]
+name = "rust-benchmarks"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "b1_fibonacci"
+path = "src/b1_fibonacci.rs"
+[[bin]]
+name = "b2_bubble_sort"
+path = "src/b2_bubble_sort.rs"
+[[bin]]
+name = "b3_matrix_mul"
+path = "src/b3_matrix_mul.rs"
+[[bin]]
+name = "b4_monte_carlo"
+path = "src/b4_monte_carlo.rs"
+[[bin]]
+name = "b5_regex"
+path = "src/b5_regex.rs"
+[[bin]]
+name = "b6_file_io"
+path = "src/b6_file_io.rs"
+[[bin]]
+name = "b7_concurrent"
+path = "src/b7_concurrent.rs"
+[[bin]]
+name = "b8_json_parse"
+path = "src/b8_json_parse.rs"
+
+[[bin]]
+name = "b9_kmeans"
+path = "src/b9_kmeans.rs"
+[[bin]]
+name = "b10_knn"
+path = "src/b10_knn.rs"
+[[bin]]
+name = "b11_mlp"
+path = "src/b11_mlp.rs"
+[[bin]]
+name = "b12_ga"
+path = "src/b12_ga.rs"
+[[bin]]
+name = "b13_fuzzy"
+path = "src/b13_fuzzy.rs"
+
+[dependencies]
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
