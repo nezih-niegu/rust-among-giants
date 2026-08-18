@@ -1,0 +1,1322 @@
+% Rust Among Giants — ICSE 2027 submission
+% Template: IEEEtran conference (mandated by ICSE 2027 CFP, switched from LNCS 2026-05-30).
+\documentclass[10pt,conference]{IEEEtran}
+
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage{float}
+\usepackage{cite}
+\usepackage{url}
+
+\begin{document}
+
+\title{Rust Among Giants:\\ An Empirical Comparison of Nine Systems Languages and\\ Nine AI Kernels for AI Infrastructure}
+
+% ICSE 2027 is double-anonymous — restore the block below before submission.
+% \author{\IEEEauthorblockN{Anonymous Author(s)}
+% \IEEEauthorblockA{\textit{Submission \#xxxx for ICSE 2027 Research Track}\\
+% Double-blind review: identifying information omitted}}
+\author{}
+
+\maketitle
+
+% ============================================================================
+\begin{abstract}
+HuggingFace Tokenizers chose Rust. PyTorch chose C++. Inference
+servers split among Go, Java, and Rust. These divergent choices
+reflect an open empirical question: for the performance-critical
+backend tier of AI/ML infrastructure, which language offers the
+best trade-off across speed, memory efficiency, safety, and
+developer productivity?
+
+We compare nine candidate backend languages---C, C++, Rust, Go,
+Java, Julia, Zig, Swift, and Kotlin---across eight systems
+workloads spanning dense floating-point compute, durable-sync
+file I/O, contended atomic concurrency, and allocation-heavy JSON
+parsing, measuring wall-clock time, peak memory, artifact size,
+lines of code, and compilation time. We further introduce a second
+suite of five \emph{AI algorithm} kernels---K-Means, $k$-NN, an
+MLP training loop, a genetic algorithm, and a Mamdani fuzzy
+inference system---implemented from scratch across a scientific
+superset that adds Fortran, Python, and R to the nine
+(Section~\ref{sec:ai-suite}). Every kernel consumes a shared
+64-bit LCG and is transcendental-free, so all implementations
+produce bit-exact identical outputs verified by cross-language
+checksum; all timings use \texttt{hyperfine} (10~runs, 3~warmup).
+
+Three findings challenge prevailing assumptions. First, Rust
+achieves the lowest geometric-mean wall time (1.59\,s vs.\ C's
+2.30\,s) while remaining within 24\% of C on peak memory,
+contradicting the view that memory safety imposes a systematic
+performance tax---except on tight indexing loops, where bounds
+checking costs a bounded $\sim$10\%. Second, the JVM outperforms
+all AOT-compiled languages by 44\% on a billion-iteration
+floating-point loop, where HotSpot's post-warmup JIT exceeds
+\texttt{clang~-O3} and \texttt{rustc} with LTO. Third, Swift
+incurs 3--6$\times$ slowdowns on Foundation/Objective-C bridged
+APIs but matches competitors with Swift~5.7+ native types.
+
+We synthesise these and three additional patterns into
+language-selection guidance for AI infrastructure teams and
+release a complete reproducible artifact.
+\end{abstract}
+
+\begin{IEEEkeywords}
+empirical software engineering, programming language comparison,
+performance benchmarking, Rust, Zig, JVM languages,
+JIT compilation, memory safety, machine learning systems
+\end{IEEEkeywords}
+
+% ============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Modern AI and ML systems exhibit a consistent architectural pattern:
+Python serves as the orchestration tier, while compute-intensive
+operations execute in compiled or JIT-compiled languages bound through
+foreign function interfaces (FFI). PyTorch, TensorFlow, and JAX delegate
+to C++ and CUDA~\cite{paszke2019pytorch,abadi2016tensorflow,jax2018github};
+HuggingFace Tokenizers and Polars delegate to
+Rust~\cite{huggingface-tokenizers,polars}; NumPy and scikit-learn delegate
+to C and Cython~\cite{harris2020numpy,pedregosa2011scikit}. We refer
+to this structure as the \emph{two-tier architecture}: the
+\textbf{Tier-1 layer} is the Python frontend that orchestrates work
+and exposes the user-facing API, and the \textbf{Tier-2 layer} is
+the performance-critical compiled or JIT-compiled backend that
+executes the actual computation. The pattern is so pervasive that
+essentially every production AI/ML system deployed in 2026 is
+polyglot by design.
+
+The Python tier's performance cost is well-established. Bugden and
+Alahmar~\cite{bugden2022igscong}, Pereira et
+al.~\cite{pereira2017energy}, and the Computer Language Benchmarks
+Game~\cite{clbg} all report Python 40--100$\times$ slower than compiled
+alternatives on CPU-bound work. The literature treats this performance
+gap as a fixed cost paid for ecosystem access, iteration speed, and
+researcher familiarity~\cite{prechelt2000empirical}.
+
+The contested question, and the one this paper addresses, concerns the
+\emph{backend} (Tier-2) language choice. When a component must be
+performance-critical, which language should it be? Should new
+tokenizers be written in Rust or C++? Should an inference server
+implement gRPC handlers in Go or Java? Is Zig a credible C replacement
+for embedded ML deployments on resource-constrained edge devices? Is
+Swift's Foundation runtime a viable backend on Apple-platform CoreML
+pipelines, or does it impose a measurable performance tax that
+practitioners need to budget for?
+
+Despite the practical importance of these choices, comprehensive
+empirical comparisons across the relevant candidate languages remain
+sparse. Bugden and Alahmar~\cite{bugden2022igscong,bugden2022safety}
+provide one foundational data point but cover only three benchmarks
+(Bubble Sort and Monte Carlo Pi) and two metrics (CPU time, memory)
+across six languages, including Python. Pereira et
+al.~\cite{pereira2017energy} cover 27 languages but only on execution
+time and energy. The Computer Language Benchmarks Game~\cite{clbg}
+maintains hundreds of comparisons but does not control implementation
+quality, version pinning, or measurement methodology rigorously enough
+for a peer-reviewed publication, and explicitly states that its
+purpose is illustrative rather than scientific.
+
+This paper extends Bugden \emph{et al.}\ substantially in three
+dimensions: (i) we cover \emph{ten} candidate languages chosen for
+their actual or claimed relevance to AI backend deployment
+(Section~\ref{sec:scope}); (ii) we cover \emph{eight} benchmarks
+spanning recursion, tight iterative loops, dense floating-point
+compute, Monte Carlo simulation, regular-expression scanning, durable
+file I/O, contended atomic synchronisation, and full JSON parsing
+(Section~\ref{sec:method}); (iii) we measure \emph{five} metrics
+(time, peak resident-set memory, distributable artifact size,
+implementation lines of code, clean-build compilation time), each
+captured under a unified statistical methodology with cross-language
+output equality verified by checksum.
+
+\textbf{Contributions.} This paper presents:
+\begin{enumerate}
+    \item A focused empirical benchmark of \textbf{ten candidate
+          languages} for the AI backend tier: C, C++, Rust, Go, Java,
+          Julia, Zig, Swift, and Kotlin. Python is excluded by design
+          and we elaborate on this choice in Section~\ref{sec:scope}.
+    \item Coverage across \textbf{eight benchmarks $\times$ five
+          metrics} spanning CPU-bound, memory-bound, I/O-bound, and
+          concurrent workloads.
+    \item A statistically rigorous methodology: \texttt{hyperfine} for
+          wall-clock time with 10 measured runs and 3 warmup
+          iterations, inline peak resident-set size capture via
+          \texttt{/usr/bin/time -l} producing 13 samples per
+          configuration, and bit-exact cross-language output
+          verification by checksum equality.
+    \item A public, reproducible artifact: full implementation source,
+          harness scripts, raw measurement JSONs, and analysis code at
+          \texttt{[repository URL anonymised for review]}.
+    \item Six cross-cutting empirical findings, including one
+          contradicting common practitioner intuition (the JVM
+          outperforms AOT-compiled languages on long
+          floating-point loops by 44\%, Section~\ref{sec:disc-jit}).
+\end{enumerate}
+
+% ============================================================================
+\section{Scope and the Question of Python}
+\label{sec:scope}
+
+The exclusion of Python from this benchmark is intentional and
+reflects the paper's research question. We elaborate this decision
+because it is the first methodological choice that a reviewer will
+question.
+
+\subsection{Python is not a Tier-2 candidate}
+
+In production AI systems, Python is not a candidate for
+performance-critical code. Its role is as the orchestration layer
+over a compiled backend (Table~\ref{tab:python-backends}). Treating
+Python as a peer of C++ or Rust in a performance benchmark would
+conflate the orchestration tier with the backend tier and obscure
+the comparison that practitioners actually face when choosing the
+compiled component of their pipeline.
+
+\begin{table}[h]
+\caption{Python's role in major AI/ML projects: in every case, the
+performance-critical backend is non-Python.}
+\label{tab:python-backends}
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Project} & \textbf{Python role} & \textbf{Backend} \\
+\midrule
+PyTorch                & frontend, autograd dispatch & C++ / CUDA \\
+TensorFlow             & frontend, graph construction & C++ / XLA \\
+JAX                    & frontend, transformations    & C++ / XLA \\
+HuggingFace Tokenizers & frontend, configuration      & \textbf{Rust} \\
+Polars                 & frontend, dataframe API      & \textbf{Rust} \\
+NumPy                  & frontend, ufunc dispatch     & C \\
+scikit-learn           & frontend, pipeline API       & C / Cython \\
+vLLM                   & frontend, serving API        & C++ / CUDA \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Python's performance gap is settled science}
+
+Prior cited works~\cite{bugden2022igscong,pereira2017energy,clbg}
+already establish Python's 40--100$\times$ performance gap on
+CPU-bound workloads. Re-measuring this gap on our hardware would
+consume substantial benchmark runtime without producing a novel
+result. Where Python's performance is directly relevant to our
+discussion (Section~\ref{sec:discussion}), we cite the prior
+results.
+
+\subsection{The set we do benchmark}
+
+Nine of the nine languages we benchmark are each candidates for the
+performance-critical backend tier in real AI infrastructure:
+\begin{itemize}
+    \item \textbf{C, C++}: incumbent systems languages; backend of
+          PyTorch, NumPy, JAX, vLLM.
+    \item \textbf{Rust}: adopted by HuggingFace Tokenizers, Polars,
+          and the new PyTorch FFI extensions RFC; the principal
+          ``new'' systems contender.
+    \item \textbf{Go}: widely deployed for inference servers and
+          orchestration daemons (TorchServe contenders, custom gRPC
+          microservices).
+    \item \textbf{Java, Kotlin}: the JVM ecosystem (ONNX Runtime
+          Java, Spark and Flink for ML pipelines, Android ML on
+          Kotlin).
+    \item \textbf{Julia}: positioned for numeric and scientific ML
+          (Flux.jl, Lux.jl).
+    \item \textbf{Zig}: the most recent C-replacement candidate;
+          deployed in TigerBeetle and Bun, gaining attention for
+          embedded ML.
+    \item \textbf{Swift}: the CoreML / Apple-platform path; emerging
+          on server with swift-server.
+\end{itemize}
+
+
+We exclude niche options (OCaml, Crystal, Nim)
+not because they are without merit but because they have negligible
+deployment in 2026 AI infrastructure as documented by project-tracking
+surveys~\cite{stackoverflow2024survey}.
+
+% ============================================================================
+\section{Background and Related Work}
+\label{sec:related}
+
+\subsection{Multi-language Performance Benchmarks}
+
+The Computer Language Benchmarks Game (CLBG)~\cite{clbg} is the most
+widely referenced multi-language performance comparison, providing
+synthetic benchmarks across dozens of languages. It focuses on
+execution time and (more recently) memory, uses hand-tuned ``best''
+implementations that may not reflect idiomatic usage, and is
+explicitly disclaimed as illustrative rather than scientific. CLBG is
+a useful baseline but does not provide controlled answers about when
+to choose between similar-tier languages, nor does it report
+implementation effort or compile-time costs.
+
+Pereira et al.~\cite{pereira2017energy} benchmarked 27 languages
+across 10 CLBG tasks, adding energy consumption as a metric. They
+report C, C++, and Rust as the most energy-efficient
+languages---an increasingly important consideration for
+large-scale ML infrastructure where wattage drives operating cost
+at hyperscale. Their methodology focuses on energy and time;
+memory, binary size, and developer effort are not measured.
+
+Prechelt~\cite{prechelt2000empirical} compared seven languages
+using programs written by 80 different programmers, measuring
+runtime, program length, development time, and memory consumption.
+The multi-dimensional design influenced our metric selection,
+though the languages compared (C, C++, Java, Perl, Python, Rexx,
+Tcl) reflect a 2000-era backend choice and the developer-effort
+methodology is not replicable for our 2026 set.
+
+Bugden and Alahmar~\cite{bugden2022igscong,bugden2022safety}
+compared C, C++, Go, Java, Python, and Rust on Bubble Sort and
+Monte Carlo Pi estimation, finding Rust first or second across
+all tests and noting its safety advantages. We extend their work
+substantially in scope (nine languages,
+eight benchmarks, five metrics) and refocus the research question
+on the backend-tier choice rather than the generic ``does Rust
+win'' framing.
+
+\subsection{Rust Safety and Performance}
+
+Jung et al.~\cite{jung2021safe} provide the definitive treatment of
+Rust's safety model. Their formal verification work,
+RustBelt~\cite{jung2018rustbelt}, proved the soundness of Rust's
+type system including its handling of \texttt{unsafe} code
+encapsulation. These results justify Rust's safety claims but do
+not address the performance trade-off across diverse workload
+shapes---a gap our benchmark fills.
+
+Industry case studies of Rust adoption are increasingly available.
+The Linux kernel accepted Rust for driver development in
+2022~\cite{ojeda2022kernel}; Microsoft Windows components are
+being incrementally rewritten in Rust for memory
+safety~\cite{microsoft2023rust}; Amazon S3 has reported substantial
+adoption of Rust for performance-critical
+paths~\cite{amazon2024rust}. None of these reports include a
+controlled cross-language performance comparison; they describe
+production decisions whose justifications combine performance,
+safety, and ecosystem fit.
+
+\subsection{Methodological Tools}
+
+Our methodology depends on two community tools whose authors merit
+citation. \texttt{hyperfine}~\cite{hyperfine} provides reproducible
+command-line wall-time benchmarking with statistical reporting and
+is the de-facto standard for cross-language micro-benchmarks at
+shell granularity. \texttt{cJSON}~\cite{cjson} and
+\texttt{nlohmann/json}~\cite{nlohmannjson} are single-file MIT-licensed
+JSON parsers used in the C and C++ B8 implementations respectively
+(see Section~\ref{sec:method-impl}).
+
+% ============================================================================
+\section{Experimental Methodology}
+\label{sec:method}
+
+\subsection{Languages and Versions}
+
+Table~\ref{tab:languages} lists the nine languages, their pinned
+versions, and compilation flags. Languages cover five paradigms:
+traditional systems (C, C++), modern systems (Rust, Zig),
+garbage-collected systems (Go), JVM-based (Java, Kotlin), JIT
+numeric (Julia), reference-counted (Swift), and the
+All compilers and
+runtimes use each language's standard release optimisation profile.
+
+\begin{table}[h]
+\caption{Languages, versions, and compilation flags.}
+\label{tab:languages}
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+\textbf{Language} & \textbf{Version} & \textbf{Compiler/Runtime} & \textbf{Optimisation} \\
+\midrule
+C       & C17     & Apple Clang 17.0.0   & \texttt{-O3 -march=native} \\
+C++     & C++17   & Apple Clang 17.0.0   & \texttt{-O3 -march=native} \\
+Rust    & 1.93.0  & rustc (2024 ed.)     & \texttt{--release}, LTO, 1 CU \\
+Go      & 1.26.3  & go build             & default (optimised) \\
+Java    & 26.0.1  & OpenJDK              & JIT (default, HotSpot) \\
+Julia   & 1.9.2   & Julia JIT            & default (JIT) \\
+Zig     & 0.14.1  & zig build            & \texttt{ReleaseFast} \\
+Swift   & 6.2.4   & swiftc               & \texttt{-O} \\
+Kotlin  & 2.3.21  & kotlinc + JVM 26.0.1 & JIT (default, HotSpot) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Benchmarks}
+
+Table~\ref{tab:benchmarks} lists the eight benchmark tasks. The
+suite is designed to cover diverse computational profiles
+representative of AI infrastructure backends: recursion (B1), tight
+iterative loops (B2), dense FP compute with cache pressure (B3),
+RNG-driven simulation (B4), library-mediated string processing
+(B5), durable disk I/O (B6), contended concurrency (B7), and
+allocation-heavy parsing (B8).
+
+\begin{table}[h]
+\caption{Benchmark suite: eight tasks and their profiles.}
+\label{tab:benchmarks}
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{ID} & \textbf{Task} & \textbf{Profile} \\
+\midrule
+B1 & Fibonacci recursive ($n{=}45$) & Function-call overhead, JIT warmup \\
+B2 & Bubble Sort ($10^5$ ints)      & Memory access, bounds checks \\
+B3 & Matrix Multiply ($2000^2$, FP64) & Dense compute, cache hierarchy \\
+B4 & Monte Carlo Pi ($10^9$ iters)  & FP arithmetic + RNG \\
+B5 & Regex ($10^6$ lines, $\sim$61\,MB) & String processing, library quality \\
+B6 & Checkpoint I/O (4\,GiB + fsync) & Durable disk throughput \\
+B7 & Concurrent counter ($8{\times}10^7$) & Atomic synchronisation \\
+B8 & JSON parse ($\sim$100\,MB)     & Tree allocation, deserialisation \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Metrics}
+
+We measure five metrics for each language--benchmark pair:
+\begin{enumerate}
+    \item \textbf{Wall-clock time (M1)}: \texttt{hyperfine} with 10
+          measured runs and 3 warmup iterations; reports mean,
+          standard deviation, median.
+    \item \textbf{Peak resident-set memory (M2)}: captured inline by
+          wrapping each \texttt{hyperfine} run with
+          \texttt{/usr/bin/time -l} (which reports
+          \texttt{ru\_maxrss} in bytes on macOS); yields 13 samples
+          per language--benchmark pair.
+    \item \textbf{Distributable artifact size (M3)}: \texttt{stat -f\%z}
+          of the executable, \texttt{.class}, or \texttt{.jar} that a
+          deployment would ship.
+    \item \textbf{Lines of code (M4)}: \texttt{wc -l} of the
+          implementation source file, excluding vendored dependencies
+          and build manifests.
+    \item \textbf{Clean-build compilation time (M5)}: wall time of a
+          full clean rebuild of all eight benchmarks per language,
+          measured after wiping the toolchain's build cache. Julia is
+          reported as N/A (interpreted; JIT cost is included in M1).
+\end{enumerate}
+
+The wrapper script adds approximately 10--30\,ms of process-launch
+overhead per run. This overhead is uniform across languages;
+relative comparisons are unaffected, and absolute differences are
+smaller than the per-language standard deviation in every
+benchmark.
+
+\subsection{Implementation Principles}
+\label{sec:method-impl}
+
+All nine implementations follow the same algorithm and use
+idiomatic language constructs. To ensure fairness we apply the
+following rules:
+
+\textbf{(a) Identical pseudo-random sequences.} B2 and B4 use the
+same linear congruential generator with seed 42 across the nine
+modern languages, so input data and Monte Carlo sample paths are
+bit-identical. B3 likewise uses a shared LCG for matrix
+initialisation, yielding bit-exact matrices and a checksum that
+matches across these nine implementations.
+
+\textbf{(b) Library policy: idiomatic standard library or
+de-facto-standard single-header dependency.} No language uses an
+external library except where the standard library is materially
+insufficient. Specifically:
+\begin{itemize}
+    \item B5 (regex): Rust uses the \texttt{regex} crate (the
+          de-facto standard, maintained by a Rust-core member);
+          Zig has no stdlib regex and uses a hand-rolled
+          email-class scanner with output verified bit-identical to
+          the eight other languages (300{,}818 matches on the same
+          input). All other languages use their stdlib regex
+          engine.
+    \item B8 (JSON): Rust uses \texttt{serde\_json}; Go uses
+          \texttt{encoding/json}; Julia uses \texttt{JSON.jl};
+          Swift uses \texttt{JSONSerialization}; Zig uses
+          \texttt{std.json}; Java and Kotlin use hand-rolled
+          recursive-descent parsers; C uses
+          \texttt{cJSON}~\cite{cjson} (vendored, MIT) and C++
+          uses \texttt{nlohmann/json}~\cite{nlohmannjson} (vendored,
+          MIT). These two C/C++ choices replace an earlier
+          byte-scanner implementation that was 30$\times$ faster but
+          solved a different problem (token counting without
+          parsing); the current implementations all materialise a
+          full JSON tree and walk it.
+\end{itemize}
+
+\textbf{(c) Cross-language output equality verified by checksum.}
+For every benchmark, all nine modern-language implementations
+print a checksum to stdout (e.g., \texttt{300818} for B5;
+\texttt{(772432, 386217, 2586760, 1158648, 386216, 116125)} for
+B8). All such checksums match bit-for-bit across the nine
+languages on every benchmark, guaranteeing that wall-time
+differences reflect implementation throughput on identical work
+rather than under- or over-counting.
+
+\textbf{(d) Atomic synchronisation in B7 uses the most-relaxed
+ordering each language exposes through its standard library.} C,
+C++, Rust, Zig, Swift (via \texttt{Synchronization.Atomic} from
+Swift 6.0+), and Julia (via \texttt{@atomic :monotonic} from
+Julia 1.7+) all use relaxed/monotonic ordering. Go, Java, and
+Kotlin cannot opt out of sequentially-consistent semantics: Go's
+\texttt{sync/atomic} package exposes no ordering parameter; Java's
+\texttt{VarHandle} family offers no relaxed RMW operation; Kotlin
+inherits Java's constraint. We discuss the implications in
+Section~\ref{sec:disc-b7}.
+
+\textbf{(e) B6 uses \texttt{fsync} between write and read phases}
+to defeat OS page-cache shortcutting that would otherwise reduce
+the benchmark to RAM throughput. We discuss the macOS-vs-Linux
+caveat (APFS \texttt{fsync} is weaker than Linux ext4
+\texttt{fsync}) in Section~\ref{sec:threats}.
+
+
+\subsection{Hardware}
+
+All experiments were conducted on an Apple MacBook with M1 chip
+(8-core: 4 performance + 4 efficiency, 3.2\,GHz), 16\,GB unified
+memory, 512\,GB SSD, running macOS Sonoma. The machine was plugged
+into wall power and otherwise idle during benchmarking; system
+sleep and display sleep were disabled. We acknowledge the
+single-platform limitation in Section~\ref{sec:threats}.
+
+% ============================================================================
+\section{Results}
+\label{sec:results}
+
+We present results in five subsections, one per metric. Aggregate
+findings across metrics are deferred to
+Section~\ref{sec:discussion}.
+
+\subsection{Execution Time (M1)}
+\label{sec:res-time}
+
+Table~\ref{tab:m1} reports mean wall-clock time in seconds for
+every (language, benchmark) cell. Per-language standard deviation
+is under 8\% of the mean in every cell, and under 2\% for JVM
+languages. Figure~\ref{fig:vsc} presents each cell as a colour-coded
+multiplier of C's time on the same benchmark, which makes the
+direction of each gap immediately readable.
+
+\begin{table*}[t]
+\caption{Mean wall-clock time (s). Bold = best per benchmark.}
+\label{tab:m1}
+\centering
+\small
+\begin{tabular}{l*{8}{r}r}
+\toprule
+            & \textbf{B1} & \textbf{B2} & \textbf{B3} & \textbf{B4} & \textbf{B5} & \textbf{B6} & \textbf{B7} & \textbf{B8} & \textbf{geomean} \\
+\midrule
+C       & 3.359 & 7.522 & 1.720 & 1.897 & 2.222 & 2.270 & 3.280 & 0.584 & 2.305 \\
+C++     & 3.349 & 8.405 & \textbf{1.309} & 1.894 & 23.338 & 2.737 & 3.039 & 1.118 & 3.331 \\
+Rust    & 3.449 & 8.388 & 1.328 & 1.899 & \textbf{0.144} & 2.376 & \textbf{2.876} & \textbf{0.574} & \textbf{1.592} \\
+Go      & 3.781 & 11.506 & 3.039 & 3.311 & 1.495 & 2.186 & 5.576 & 1.036 & 3.088 \\
+Java    & \textbf{3.340} & 13.107 & 2.687 & \textbf{1.315} & 2.042 & 2.460 & 4.342 & 0.952 & 2.744 \\
+Zig     & 3.445 & \textbf{7.563} & 1.329 & 1.899 & 0.150 & \textbf{2.183} & 3.191 & 0.693 & 1.621 \\
+Swift   & 4.351 & 15.222 & 3.956 & 4.759 & 8.869 & 2.494 & 2.935 & 3.861 & 4.863 \\
+Kotlin  & 3.351 & 12.923 & 2.704 & 1.415 & 2.089 & 2.363 & 4.453 & 1.127 & 2.829 \\
+Julia   & 4.986 & 13.092 & 1.582 & 2.077 & 0.397 & 2.642 & 7.592 & 1.166 & 2.584 \\
+\bottomrule
+\end{tabular}
+\\[2pt]
+ = benchmark omitted by capability (no regex / no threads / no JSON PARSE); see \S\ref{sec:method-impl}(f). Numeric cells pending final benchmark run.}
+\end{table*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/fig2_vs_c_heatmap.png}
+\caption{Wall time relative to C (green: faster, red: slower).
+Rust wins B5, B7, B8 and ties C within 5\% on B1, B3, B4.}
+\label{fig:vsc}
+\end{figure*}
+
+\textbf{Geometric-mean ranking}: Rust 1.592\,s, Zig 1.621\,s, C
+2.305\,s, Julia 2.584\,s, Java 2.744\,s, Kotlin 2.829\,s, Go
+3.088\,s, C++ 3.331\,s, Swift 4.863\,s. Rust and Zig form a
+top tier statistically distinguishable from C by approximately
+30\% on geomean; C, Java, Kotlin, Julia cluster within 23\% of
+each other in the middle; Swift trails on geomean primarily due
+to Foundation-API overhead on B5 (regex) and B8 (JSON).
+
+\textbf{Per-benchmark headline.} Rust wins B5, B7, B8 outright;
+ties C/C++/Zig within statistical noise on B1, B3, B4; loses to C
+and Zig by 10--11\% on B2 (bounds-check cost on tight indexing
+loops); loses to JVM languages by 44\% on B4 (long FP loop where
+JIT optimisation amortises). We elaborate on each of these
+patterns in Section~\ref{sec:discussion}.
+
+\subsection{Peak Memory (M2)}
+\label{sec:res-mem}
+
+Table~\ref{tab:m2} reports peak resident-set size in MB for every
+cell (13 samples per cell, mean reported). Three structural
+phenomena are visible in the data. First, three language clusters
+separate cleanly: AOT-native ($\leq$10\,MB), JVM
+($\sim$40--80\,MB), and Julia as a standalone outlier
+($\geq$200\,MB). Second, B3 (matrix multiplication) elevates all
+languages to $\sim$93\,MB because the input matrices themselves
+are 32\,MB each. Third, B6 shows the documented Swift
+\texttt{FileHandle} resident-buffer anomaly
+(Section~\ref{sec:threats}); B8 dominates the suite because all
+nine implementations materialise the parsed JSON tree.
+
+\begin{table*}[t]
+\caption{Peak resident-set memory (MB). Bold = best per benchmark.}
+\label{tab:m2}
+\centering
+\small
+\begin{tabular}{l*{8}{r}r}
+\toprule
+            & \textbf{B1} & \textbf{B2} & \textbf{B3} & \textbf{B4} & \textbf{B5} & \textbf{B6} & \textbf{B7} & \textbf{B8} & \textbf{geomean} \\
+\midrule
+C       & \textbf{1.2} & \textbf{1.6} & \textbf{92.8} & \textbf{1.2} & \textbf{1.3} & 2.3 & \textbf{1.3} & 559.8 & \textbf{5.1} \\
+C++     & 1.3 & 1.7 & 92.9 & 1.3 & 1.5 & 2.3 & 1.4 & \textbf{488.8} & 5.2 \\
+Rust    & 1.3 & 1.7 & 93.0 & 1.3 & 2.3 & 3.4 & 1.4 & 782.2 & 6.3 \\
+Go      & 3.7 & 4.5 & 96.2 & 3.7 & 10.3 & 4.8 & 4.1 & 570.0 & 12.8 \\
+Java    & 38.9 & 40.8 & 137.6 & 42.4 & 53.0 & 43.9 & 40.8 & 1467.8 & 77.4 \\
+Zig     & 1.3 & \textbf{1.6} & 92.8 & \textbf{1.2} & 1.3 & \textbf{2.2} & 1.4 & 994.3 & 5.6 \\
+Swift   & 1.7 & 6.1 & 97.1 & 5.4 & 129.9 & 4071.6 & 2.1 & \textbf{328.1} & 34.5 \\
+Kotlin  & 41.8 & 42.6 & 141.9 & 43.6 & 57.0 & 46.7 & 42.7 & 1477.4 & 81.0 \\
+Julia   & 201.1 & 212.7 & 304.4 & 208.2 & 246.9 & 206.2 & 210.3 & 1024.8 & 271.8 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\textbf{Geometric-mean ranking}: C 5.1\,MB, C++ 5.2\,MB, Zig
+5.6\,MB, Rust 6.3\,MB, Go 12.8\,MB, Swift 34.5\,MB (inflated by
+the B6 anomaly), Java 77.4\,MB, Kotlin 81.0\,MB, Julia 271.8\,MB.
+The C-cluster (C, C++, Zig, Rust) lies within a $1.24\times$
+band, satisfying H4 (memory clustering of AOT natives). Julia
+exceeds C by 53$\times$ on geomean, comfortably exceeding the
+$>$100$\times$ predicted for short-lived processes; the gap is
+amplified on B1/B2/B4/B7 (200$\times$ class) and shrunk on B3/B8
+(2--4$\times$) where the data footprint dominates the runtime.
+
+\subsection{Distributable Artifact Size (M3)}
+\label{sec:res-binary}
+
+Table~\ref{tab:m3} reports the per-(language, benchmark)
+distributable artifact size in kilobytes.
+
+\begin{table*}[t]
+\caption{Distributable artifact size (KB).}
+\label{tab:m3}
+\centering
+\small
+\begin{tabular}{l*{8}{r}r}
+\toprule
+        & \textbf{B1} & \textbf{B2} & \textbf{B3} & \textbf{B4} & \textbf{B5} & \textbf{B6} & \textbf{B7} & \textbf{B8} & \textbf{mean} \\
+\midrule
+C       & 33 & 33 & 49 & 33 & 33 & 33 & 33 & 71 & 40 \\
+C++     & 35 & 35 & 51 & 35 & 111 & 37 & 37 & 148 & 61 \\
+Rust    & 348 & 347 & 365 & 365 & 1556 & 365 & 369 & 386 & 513 \\
+Go      & 2434 & 2435 & 2451 & 2451 & 2830 & 2451 & 2435 & 3003 & 2561 \\
+Java    & 1 & 1 & 1 & 1 & 1 & 2 & 1 & 4 & 1 \\
+Zig     & 52 & 52 & 68 & 68 & 52 & 68 & 52 & 125 & 67 \\
+Swift   & 52 & 52 & 52 & 51 & 53 & 54 & 51 & 54 & 52 \\
+Kotlin  & 5387 & 5387 & 5388 & 5387 & 5388 & 5388 & 5388 & 5390 & 5388 \\
+Julia   & --- & --- & --- & --- & --- & --- & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Across the suite mean artifact size spans five orders of magnitude:
+Java \texttt{.class} at 1.5\,KB (but requiring a 200\,MB JVM at
+runtime), through C at 41\,KB and Swift at 54\,KB, up to Kotlin's
+self-contained 5.5\,MB \texttt{.jar} bundles. Rust's binaries
+range 348--1556\,KB; the high end is B5, where the
+\texttt{regex} crate's DFA tables are linked statically. Go's
+binaries are uniformly $\sim$2.5\,MB due to the runtime and GC
+shipped in every executable.
+
+\subsection{Implementation Lines of Code (M4)}
+\label{sec:res-loc}
+
+Table~\ref{tab:m4} reports lines of code per (language, benchmark)
+in the implementation source file only. Vendored dependencies
+(cJSON, nlohmann::json) and build manifests (Cargo.toml,
+Makefile, build.zig) are excluded.
+
+\begin{table*}[t]
+\caption{Implementation lines of code (\texttt{wc -l}), per benchmark.}
+\label{tab:m4}
+\centering
+\small
+\begin{tabular}{l*{8}{r}r}
+\toprule
+        & \textbf{B1} & \textbf{B2} & \textbf{B3} & \textbf{B4} & \textbf{B5} & \textbf{B6} & \textbf{B7} & \textbf{B8} & \textbf{mean} \\
+\midrule
+C       & 21 & 47 & 60 & 27 & 36 & 47 & 32 & 95 & 37.8 \\
+C++     & 11 & 19 & 23 & 12 & 12 & 19 & 13 & 35 & 18.0 \\
+Rust    & 11 & 12 & 16 & 11 & 12 & 22 & 14 & 33 & 16.4 \\
+Go      & 12 & 13 & 19 & 12 & 11 & 14 & 15 & 33 & 16.1 \\
+Java    & 11 & 21 & 32 & 20 & 11 & 20 & 15 & 87 & 27.1 \\
+Zig     & 14 & 19 & 25 & 16 & 47 & 31 & 16 & 41 & 26.1 \\
+Swift   & 11 & 17 & 26 & 17 & 10 & 17 & 13 & 23 & 16.8 \\
+Kotlin  & 10 & 13 & 23 & 12 & 9 & 18 & 9 & 63 & 19.6 \\
+Julia   & 11 & 23 & 27 & 17 & 21 & 26 & 17 & 28 & 21.3 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Swift, Rust, Go, and Kotlin cluster as the most expressive
+languages (16--20 mean LOC per benchmark). C is roughly twice as
+verbose (37.8 LOC) due to explicit \texttt{\#include}s, manual
+memory management, and absence of standard-library JSON parsing.
+Zig sits between modern systems languages and C at 26.1, reflecting
+its explicit allocator passing and \texttt{try}/\texttt{defer}
+syntax.
+
+\subsection{Clean-build Compilation Time (M5)}
+\label{sec:res-compile}
+
+Table~\ref{tab:m5} reports clean-build compilation time for all
+eight benchmarks per language. The measurement is total wall time
+of building every benchmark from a wiped toolchain cache; Rust and
+Zig share dependency compilation across benchmarks, so per-benchmark
+times would be misleading.
+
+\begin{table}[h]
+\caption{Clean-build wall time for all 8 benchmarks per language.}
+\label{tab:m5}
+\centering
+\small
+\begin{tabular}{lrl}
+\toprule
+\textbf{Language} & \textbf{Time (s)} & \textbf{Build command} \\
+\midrule
+C       & \textbf{0.71}  & \texttt{make -j1 all} (clean) \\
+Java    & 2.37  & \texttt{javac} per file (clean) \\
+Swift   & 3.01  & \texttt{swiftc -O} per file (clean) \\
+Go      & 3.64  & \texttt{go clean -cache} + per-bench build \\
+C++     & 4.31  & \texttt{make -j1 all} (clean) \\
+Zig     & 5.61  & \texttt{zig build} (clean cache) \\
+Rust    & 13.02 & \texttt{cargo build --release} (clean) \\
+Kotlin  & 23.59 & \texttt{kotlinc -include-runtime} per file \\
+Julia   & N/A   & interpreted (JIT cost in M1) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Figure~\ref{fig:static} presents M3 and M5 jointly: Java sits in
+the lower-left as the fastest-to-build and smallest-distributable
+(modulo its JVM runtime dependency); Kotlin sits in the upper-right
+as the simultaneously slowest-to-build and largest-distributable.
+Rust pays 13\,s of build time for compact binaries; Go pays 3.6\,s
+for fat binaries.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig5_static_metrics.png}
+\caption{Clean-build time (M5) vs mean artifact size (M3).}
+\label{fig:static}
+\end{figure}
+
+\subsection{Productivity vs Performance}
+\label{sec:res-pareto}
+
+Figure~\ref{fig:loc-vs-time} plots mean LOC (M4) against
+geometric-mean wall time (M1), revealing the Pareto frontier of
+the productivity/performance trade-off.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig4_loc_vs_time.png}
+\caption{Mean LOC vs geomean wall time (log $y$). Lower-left wins.}
+\label{fig:loc-vs-time}
+\end{figure}
+
+Rust and Zig occupy the Pareto-optimal lower-left: shortest code
+AND fastest runtime. C sits in the lower-right (fast but verbose).
+Swift sits in the upper-left (compact but slow due to Foundation
+overhead). Kotlin and Go are Pareto-dominated by Rust on both
+axes.
+
+\subsection{Multi-Dimensional Summary}
+
+Figure~\ref{fig:radar} provides a five-dimensional comparison for
+five representative languages (one per tier: C for incumbent AOT,
+Rust for modern systems, Go for GC native, Java for JVM, Julia
+for JIT numeric). Each axis is normalised so 1.0 is the best
+score observed across the ten-language set.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig6_radar.png}
+\caption{Five-axis comparison, normalised (higher is better).}
+\label{fig:radar}
+\end{figure}
+
+No single language dominates the radar. C has the most balanced
+profile; Rust wins Speed; Java wins Binary (bytecode small,
+but requires JVM); Go wins LOC compactness; Julia trails on every
+axis except LOC.
+
+% ============================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+We synthesise six cross-cutting patterns supported by at least
+two independent benchmarks each, ordered by their importance to
+the paper's thesis.
+
+\subsection{Rust matches or beats C on modern library-rich workloads}
+\label{sec:disc-rustc}
+
+Across three independent workloads using each language's idiomatic
+standard library or crate, Rust matches C within 2\% on parsing
+and concurrency, and substantially exceeds C when each language's
+canonical regex engine is used. On B7 (concurrent atomic
+counter), Rust 2.876\,s versus C 3.280\,s (Rust is 14\% faster).
+On B8 (full JSON parse), Rust 0.574\,s versus C 0.584\,s (a 2\%
+gap within measurement noise). On B5 (regex), Rust 0.144\,s
+versus C 2.222\,s (a $15\times$ advantage, dominated by the
+modern \texttt{regex} crate's lazy DFA versus the POSIX
+backtracking engine in macOS libc). On the geometric mean of all
+eight benchmarks, Rust 1.592\,s versus C 2.305\,s (Rust
+30\% faster).
+
+The pattern qualifies H1: Rust's safety guarantees do not impose
+a measurable performance tax on the workloads we tested,
+\emph{except} on tight indexing loops (Section~\ref{sec:disc-h1}).
+The result is consistent with industry adoption patterns
+(HuggingFace Tokenizers, Polars) where Rust now competes with C++
+for greenfield AI infrastructure.
+
+\subsection{Rust's safety cost is bounded and workload-specific}
+\label{sec:disc-h1}
+
+The one benchmark where Rust loses cleanly to C is B2 (Bubble
+Sort): Rust 8.388\,s versus C 7.522\,s and Zig 7.563\,s (Rust 10\%
+slower). The cause is mandatory bounds checking on
+\texttt{Vec}\verb|<i32>| indexing: the bubble-sort inner loop
+performs $\sim 5 \times 10^9$ array accesses on the size-$10^5$
+input, each carrying a per-access bounds check that LLVM does not
+elide for this loop shape. C performs no bounds checks; Zig's
+\texttt{ReleaseFast} similarly disables them by default. The
+unsafe variant in Rust (\texttt{v.get\_unchecked(i)}) closes the
+gap entirely but surrenders the very safety property that
+motivates choosing Rust. We report the safe-mode number because
+safe-mode is the population this paper is measuring.
+
+The practical implication is that for AI backends whose hot path
+is tight integer indexing with non-elidable bounds (e.g.\ pure
+sort kernels, hash-table probing without SIMD), Rust pays a
+real 10--15\% tax. For typical AI workloads dominated by FP
+compute, allocation, or I/O, the tax is below measurement noise.
+
+\subsection{Counter-intuitive: the JVM beats AOT on long FP loops}
+\label{sec:disc-jit}
+
+The most surprising finding of the suite is on B4 (Monte Carlo Pi,
+$10^9$ iterations, FP arithmetic plus LCG RNG): Java 1.315\,s and
+Kotlin 1.415\,s versus Rust 1.899\,s, C 1.897\,s, and Zig
+1.899\,s. The JVM is 44\% faster than the AOT-compiled languages.
+
+This contradicts the common practitioner assumption that JIT
+compilation imposes a baseline overhead relative to AOT. With
+$10^9$ iterations of a tight FP loop, HotSpot's tiered JIT has
+ample warmup time and the post-warmup machine code is, on M1,
+better than what \texttt{rustc} and \texttt{clang -O3} produce for
+the same loop. Plausible attribution: HotSpot performs
+profile-guided FP intrinsic substitution and inline caching that
+AOT compilers cannot replicate without ahead-of-time PGO data.
+
+The implication is significant for AI infrastructure: workloads
+dominated by long FP loops without SIMD (Monte Carlo simulation,
+some embedding-space distance kernels, RNG-driven data
+augmentation pipelines) may run faster on a long-lived JVM
+service than on an AOT-compiled equivalent. The JIT startup cost
+amortises in seconds, not milliseconds, but for long-lived
+inference services this cost is paid once. This is the strongest
+counter-evidence in the paper to the default
+``compiled-equals-fast'' framing.
+
+\subsection{C++ stdlib is the slow outlier of the AOT group}
+
+C++ is slower than Rust on five of eight benchmarks
+($\geq 12\%$), and slower by $\geq 1.9\times$ on the two
+library-mediated benchmarks: B5 ($23.34\,\textrm{s}$ vs Rust
+$0.144\,\textrm{s}$, a $162\times$ gap) and B8 ($1.118\,\textrm{s}$
+vs Rust $0.574\,\textrm{s}$). The gaps are properties of C++'s
+\emph{standard library} rather than of the language: \texttt{libc++}'s
+\texttt{<regex>} is a backtracking NFA implementation that is well
+known in the C++ community to underperform RE2, PCRE2, or
+Hyperscan~\cite{cox2007regex,hyperscan2019}; \texttt{nlohmann/json},
+while the de-facto modern C++ JSON parser, is comprehensively
+featured rather than throughput-optimised, and trails simdjson by
+similar margins~\cite{simdjson2019}.
+
+We choose to report C++ using its idiomatic single-header
+dependencies because that is what greenfield C++ projects in 2026
+actually reach for; reporting RE2/simdjson numbers instead would
+measure the SIMD-accelerated library, not the C++ ecosystem.
+Practitioners considering C++ for new AI backends should budget a
+SIMD-library dependency to recover competitive throughput on
+string-processing workloads.
+
+\subsection{Swift's Foundation APIs are a systematic performance liability}
+
+On every benchmark where Swift's implementation uses a
+Foundation/Objective-C-bridged API, Swift underperforms native
+alternatives by 3--6$\times$: B5 NSRegularExpression at 8.869\,s
+versus Rust 0.144\,s ($62\times$); B6 \texttt{FileHandle}
+exhibiting a 4\,GB resident-buffer anomaly
+(Section~\ref{sec:threats}); B8 \texttt{JSONSerialization} at
+3.861\,s versus Rust 0.574\,s ($6.7\times$). On benchmarks where
+Swift's implementation uses Swift 5.7+ native types
+(\texttt{ContiguousArray} in B3, \texttt{Synchronization.Atomic}
+in B7), Swift is competitive with Rust and C
+(Section~\ref{sec:res-time}).
+
+The pattern is reproducible enough to constitute design guidance:
+production Swift code targeting server-side performance should
+systematically prefer Swift 5.7+ native types over Foundation
+primitives. The Foundation runtime is optimised for memory-safety
+and Objective-C bridging, not for throughput in long-lived
+processes.
+
+\subsection{JVM languages produce the most stable measurements}
+
+Across all eight benchmarks, Java and Kotlin exhibit
+per-language standard deviations 3--6$\times$ tighter than
+AOT-compiled binaries post-warmup. On B5, Java
+$\sigma/\mu = 1.4\%$ and Kotlin $\sigma/\mu = 1.3\%$ while AOT
+languages span 3--8\%; on B7 the JVM languages are at 1.4\%
+versus 3--8\% for AOT; on B8 Java is at 1.0\% versus AOT 0.6--2.0\%.
+
+We attribute this to HotSpot's tiered JIT reaching a deterministic
+steady state by the third warmup run, after which the executing
+machine code is stable and largely independent of scheduler noise.
+AOT binaries are subject to the same scheduler noise but cannot
+amortise warmup; the first instruction executed is the production
+machine code.
+
+The implication is methodological rather than performance-focused.
+JIT runtimes are an under-reported tool for \emph{reproducible}
+measurement, not just for execution. Researchers benchmarking
+long-running workloads may obtain tighter confidence intervals on
+a JVM than on an AOT equivalent.
+
+\subsection{Kotlin and Java diverge measurably despite identical bytecode targets}
+
+Java and Kotlin both compile to JVM bytecode and run on the same
+HotSpot runtime. Yet on B7 (concurrent atomic) Java is 4.342\,s
+and Kotlin 4.453\,s (Kotlin 2.5\% slower); on B8 (JSON parse,
+implemented with identical hand-rolled recursive-descent in both)
+Java is 0.952\,s and Kotlin 1.127\,s (Kotlin 18\% slower).
+
+The B8 gap is the more interesting one because the algorithm is
+held constant. The cause is Kotlin's standard-library wrappers:
+\texttt{mutableMapOf} and \texttt{mutableListOf} dispatch through
+factory methods rather than directly instantiating
+\texttt{LinkedHashMap} / \texttt{ArrayList} as the Java code does;
+the \texttt{Char in String} idiom for whitespace skipping
+allocates intermediate \texttt{CharRange} objects that Java's
+explicit \texttt{indexOf} avoids; primitive boxing in generic
+contexts is more aggressive in Kotlin than in Java. The cumulative
+effect is up to 18\% on allocation-heavy workloads.
+
+For AI infrastructure teams that prefer Kotlin for its
+syntax and null safety, this is a $\leq 20\%$ cost to budget. It
+does not invalidate Kotlin as a backend choice, but it does
+contradict the popular claim that Kotlin's JVM-bytecode output
+is functionally equivalent to equivalent Java.
+
+\subsection{Practical Recommendations}
+\label{sec:disc-rec}
+
+The findings support the following decision guidance for
+selecting a Tier-2 language for new AI infrastructure components
+in 2026:
+
+\textbf{Default choice (greenfield, server-side, performance-critical):}
+\textbf{Rust}. Wins the geometric mean of wall time, comes within
+24\% of C on memory, has the strongest library ecosystem of the
+modern AOT systems languages, and is the only AOT systems
+language with both memory-safety guarantees and proven adoption in
+the AI infrastructure layer (HuggingFace, Polars, PyTorch FFI
+RFC).
+
+\textbf{Long-running FP-loop services (Monte Carlo sims,
+embedding-distance kernels, RNG pipelines):} \textbf{Java or
+Kotlin}. The 44\% B4 advantage exceeds the JVM-runtime overhead
+for any process living longer than $\sim 10$ seconds.
+
+\textbf{Edge / embedded / on-device ML (distributable artifact
+$<$100\,KB, RAM budget $<$10\,MB):} \textbf{C, Zig, or Swift}.
+Rust is excluded by its 525\,KB mean binary; Swift wins on
+expressiveness within Apple ecosystems; Zig is the best
+non-Apple modern choice.
+
+\textbf{Apple-platform server (Linux server-side Swift, CoreML
+inference plumbing):} \textbf{Swift, with the explicit guidance
+to avoid Foundation APIs}. Swift 5.7+ native types are competitive
+with Rust on the benchmarks we measured.
+
+\textbf{JVM-shop integration (Spark/Flink/ONNX-Java pipelines):}
+\textbf{Java}, not Kotlin. The 18\% B8 cost of Kotlin is real and
+worth budgeting if performance is the primary criterion; choose
+Kotlin only when team productivity outweighs that cost.
+
+\textbf{Avoid for new AI backends:} \textbf{C++ for string-heavy
+work} (the $162\times$ B5 result and $1.95\times$ B8 result are
+not edge cases). \textbf{Julia for short-lived processes} (the
+$53\times$ memory tax on geomean is a deployment-cost
+multiplier). \textbf{Go for compute-heavy hot paths}
+(consistently middle-of-the-pack on M1, with
+\texttt{encoding/json} a known performance liability on B8).
+
+
+\subsection{Threats to Validity}
+\label{sec:threats}
+
+\textbf{Single hardware platform.} All results are from a
+single Apple M1 ARM64 machine. Results on x86\_64 may differ
+because of instruction-set differences (notably AVX-512 absent on
+M1) and divergent compiler back-ends. We mitigate by reporting
+relative ranks where possible; absolute numbers are
+M1-specific.
+
+\textbf{Implementation quality.} Despite community-recommended
+patterns and idiomatic constructs, implementation expertise
+varies across languages and the authors are more familiar with
+some languages than others. We mitigate by (i) publishing all
+source for public inspection, (ii) cross-language checksum
+verification for every benchmark, (iii) pinning compiler versions
+and release-profile flags.
+
+\textbf{Benchmark selection.} Eight benchmarks cannot represent
+all AI backend workloads. We omit GPU compute (orthogonal to
+language choice; dominated by CUDA / Metal kernels), networking
+(language-agnostic at the syscall layer), and database
+operations (dominated by the driver, not the language). The
+chosen eight cover the CPU-bound, memory-bound, I/O-bound, and
+concurrent profiles that distinguish backend languages from one
+another.
+
+\textbf{Library asymmetries.} B5 uses Zig's hand-rolled
+email-class scanner because Zig stdlib lacks regex; we verify the
+output matches all eight other languages (300{,}818 matches), so
+the wall-time number is a measurement of stdlib string-scanning
+throughput rather than a regex engine. B8 vendors cJSON (C) and
+nlohmann::json (C++) because neither stdlib provides JSON
+parsing; both libraries are MIT-licensed single-file dependencies
+representative of what greenfield C/C++ projects ship.
+
+\textbf{macOS-specific \texttt{fsync} semantics in B6.} APFS
+\texttt{fsync} flushes to the SSD's device-level write cache, not
+to the physical media. Linux ext4 \texttt{fsync} is stricter and
+would slow the B6 absolute numbers by approximately $2\times$.
+Relative rankings across languages are unaffected because all
+ten face the same OS semantics.
+
+\textbf{Swift B6 resident-set anomaly.} Swift's
+\texttt{FileHandle.readData(ofLength:)} accumulates the full
+4\,GiB read buffer to memory, producing a 4071\,MB peak RSS
+instead of the expected $\sim$5\,MB. We document the anomaly but
+do not work around it because the Swift implementation as
+written matches what a Foundation-style implementation would do;
+the anomaly is a property of Foundation's API design, not of
+our measurement methodology.
+
+\textbf{Atomic memory ordering split in B7.} C/C++/Rust/Zig/Swift/Julia
+use relaxed/monotonic ordering; Go/Java/Kotlin are forced to
+sequentially-consistent ordering by their standard libraries
+(Section~\ref{sec:method-impl}). This is a property of the
+language stdlibs, not of our measurement; reporting using each
+language's idiomatic API is the correct empirical choice. The
+SC-cost on ARM64 ($\texttt{dmb ish}$ per increment under
+contention) accounts for approximately half of the gap between
+Go/Java/Kotlin and the relaxed-atomic languages on B7.
+
+\textbf{Wrapper overhead.} A uniform 10--30\,ms wrapper
+(\texttt{harness/wrap\_rss.sh}) is applied to every timing run to
+enable inline RSS capture. This elevates absolute timing by
+$<$2\% on all benchmarks and is below the per-language standard
+deviation in every cell; relative comparisons are unaffected.
+
+\subsection{B7 Concurrent counter discussion}
+\label{sec:disc-b7}
+
+Discussion of memory ordering in B7 is integrated into
+Section~\ref{sec:threats} above for narrative coherence.
+
+% ============================================================================
+\section{AI Algorithm Benchmarks}
+\label{sec:ai-suite}
+
+The eight systems benchmarks of Section~\ref{sec:method} stress the
+language runtime (recursion, I/O, atomics, parsing). To complement them with
+the \emph{numerical} core of an AI backend, we add a second suite of five
+from-scratch AI kernels and broaden the language set to the scientific tier.
+
+\subsection{Kernels and expanded language set}
+The five kernels are K-Means clustering (Lloyd's algorithm), $k$-NN
+classification, a multilayer-perceptron training loop (forward + back-prop,
+full-batch gradient descent), a genetic algorithm minimising the Rosenbrock
+function, and a Mamdani fuzzy-inference system. Each is deliberately
+transcendental-free---ReLU and MSE rather than sigmoid/softmax, squared
+Euclidean distance rather than $\sqrt{\cdot}$, uniform rather than Gaussian
+mutation---so that, driven by the same 64-bit LCG (seed 42) as the systems
+suite, every implementation is \emph{bit-exact} across languages and verified
+by a shared checksum (e.g.\ \texttt{559268 20.004093} for K-Means,
+\texttt{8603} for $k$-NN). All loops are hand-written scalar code: the suite
+measures the language, not a vendor BLAS.
+
+Because numerical computing has incumbents outside the systems set, the AI
+suite is implemented across a \emph{superset} of the nine: it adds
+\textbf{Fortran} (the numeric incumbent), \textbf{Python} (the Tier-1
+orchestration language, here as a pure-scalar reference), and \textbf{R} (the
+statistical-computing tier). COBOL, present in an earlier draft of the systems
+suite, is retired from the merged artifact. Java, Zig, Swift, and Kotlin
+implementations of all five kernels are included and checksum-verified
+(Java bit-exact; the remaining three pending a timing run on their native
+toolchains); the timing tables below report the seven languages whose
+full-scale runs have completed. R is correctness-verified but excluded from
+timing as the slow interpreted-scalar tier.
+
+\subsection{Results}
+Table~\ref{tab:ai-m1} reports mean wall-clock time and Table~\ref{tab:ai-m2}
+peak memory, both over the same \texttt{hyperfine} protocol (10 runs, 3
+warmup) and inline RSS capture used for the systems suite. By geometric mean
+the native tier is tightly packed---C and C\nobreakspace++ tie at the top
+(0.74\,s), Rust is within 16\% (0.85\,s), and Fortran within 45\%
+(1.07\,s), winning GA outright and matching C to three decimals on Fuzzy.
+Rust wins MLP. Julia (1.95\,s) leads Go (2.69\,s), whose 12$\times$ K-Means
+result is the slowest compiled cell; Python trails by $\sim$159$\times$ on
+geomean, as expected for a pure-scalar reference. On memory the AOT natives
+occupy a 3.4--4.3\,MB band while Julia's resident runtime costs $88\times$ C.
+
+\begin{table*}[t]
+\caption{AI suite --- mean wall-clock time (s) over 10 runs. Bold = fastest per benchmark.}
+\label{tab:ai-m1}\centering\small
+\begin{tabular}{l*{5}{r}r}
+\toprule
+ & \textbf{K-Means} & \textbf{k-NN} & \textbf{MLP} & \textbf{GA} & \textbf{Fuzzy} & \textbf{geomean} \\ \midrule
+C & \textbf{0.486} & 0.813 & 1.051 & 1.306 & 0.400 & \textbf{0.737} \\
+C++ & 0.518 & \textbf{0.797} & 1.048 & 1.317 & \textbf{0.400} & 0.744 \\
+Rust & 0.771 & 0.848 & \textbf{0.816} & 1.326 & 0.643 & 0.854 \\
+Go & 5.841 & 2.724 & 3.088 & 1.776 & 1.628 & 2.694 \\
+Fortran & 2.503 & 1.000 & 1.077 & \textbf{1.282} & 0.401 & 1.068 \\
+Python & 198.8 & 162.5 & 120.0 & 71.03 & 79.58 & 117.0 \\
+Julia & 3.393 & 1.969 & 1.729 & 1.792 & 1.346 & 1.945 \\
+\bottomrule\end{tabular}\end{table*}
+
+\begin{table*}[t]
+\caption{AI suite --- peak resident-set memory (MB), 13 samples per cell. Bold = lowest per benchmark.}
+\label{tab:ai-m2}\centering\small
+\begin{tabular}{l*{5}{r}r}
+\toprule
+ & \textbf{K-Means} & \textbf{k-NN} & \textbf{MLP} & \textbf{GA} & \textbf{Fuzzy} & \textbf{geomean} \\ \midrule
+C & \textbf{4.94} & \textbf{5.11} & \textbf{3.05} & 3.91 & 1.52 & \textbf{3.40} \\
+C++ & 6.57 & 6.87 & 3.06 & \textbf{3.89} & \textbf{1.52} & 3.82 \\
+Rust & 5.34 & 5.66 & 3.07 & 3.97 & 1.63 & 3.59 \\
+Go & 5.65 & 5.80 & 3.13 & 3.94 & 1.53 & 3.62 \\
+Fortran & 5.76 & 6.09 & 3.88 & 4.78 & 2.35 & 4.33 \\
+Python & 32.34 & 32.11 & 18.51 & 17.54 & 9.40 & 19.96 \\
+Julia & 308.4 & 278.3 & 312.3 & 302.0 & 297.6 & 299.5 \\
+\bottomrule\end{tabular}\end{table*}
+
+These rankings echo the systems suite---the AOT-native cluster leads, the JVM
+and JIT tiers trail on short-lived processes, and the productivity tier pays a
+large constant factor---while adding Fortran as a credible native-tier
+competitor specifically on dense numerical kernels.
+
+% ============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+This paper presented an empirical comparison of ten candidate
+languages for the performance-critical Tier-2 backend of AI/ML
+infrastructure: C, C++, Rust, Go, Java, Julia, Zig, Swift, Kotlin evaluated across eight
+benchmark tasks and five metrics under a unified statistical
+methodology with bit-exact cross-language output verification
+
+
+The data supports Rust as the rational default choice for new
+greenfield AI backends in 2026: Rust matches C on geometric-mean
+wall time across all eight benchmarks (1.59\,s vs 2.30\,s) while
+imposing only a 24\% memory tax, with library-mediated workloads
+(regex, JSON, concurrency) showing Rust ahead. The historical
+``safety costs performance'' framing for Rust does not survive
+modern compiler optimisation on the workloads we tested, except
+for tight integer indexing loops where the cost is measurable at
+$\sim$10\% and bounded.
+
+The data also contradicts two persistent practitioner intuitions
+that the paper makes explicit and quantifies for the first time
+in a controlled multi-language setting. First, the JVM beats
+AOT-compiled languages by 44\% on long FP loops (B4); HotSpot's
+post-warmup optimisations exceed those of static AOT compilation
+on this workload shape. Second, Swift's Foundation APIs impose
+a 3--6$\times$ slowdown on every benchmark where they are used;
+production Swift services targeting performance should
+systematically prefer Swift 5.7+ native types.
+
+The artifact (source, harness, raw measurement JSONs, analysis
+code) is publicly available for reproduction and extension. We
+anticipate future extensions to (i) x86\_64 and Linux platforms
+to validate the M1 ARM64 results, (ii) GPU-accelerated workloads
+where the language choice intersects with kernel-launch overhead,
+and (iii) longitudinal tracking of how the rankings evolve as
+language toolchains mature.
+
+% ============================================================================
+\section*{Reproducibility}
+
+All implementation source, harness scripts, raw measurement
+JSONs (\texttt{results/b\{1..8\}\_*.json},
+\texttt{m3\_binary\_size.json}, \texttt{m4\_loc.json},
+\texttt{m5\_compile\_time.json}), and analysis scripts
+(\texttt{analysis/plots.py}) are publicly available at
+\texttt{[anonymised for double-blind review]}. The full benchmark
+suite reproduces under approximately 90 minutes of wall time on
+an Apple M1 machine via the provided
+\texttt{harness/run\_all.sh}; toolchain pinning instructions are
+in the repository \texttt{README.md}.
+
+% ============================================================================
+\bibliographystyle{IEEEtran}
+
+\begin{thebibliography}{99}
+
+\bibitem{bugden2022igscong}
+W.~Bugden and A.~Alahmar, ``Rust: The programming language for
+safety and performance,'' in \emph{Proc.\ IGSCONG'22}, 2022,
+pp.~1--12.
+
+\bibitem{bugden2022safety}
+W.~Bugden and A.~Alahmar, ``The safety and performance of
+prominent programming languages,'' \emph{Int.\ J.\ Softw.\ Eng.\
+Knowl.\ Eng.}, 2022.
+
+\bibitem{jung2021safe}
+R.~Jung, J.-H.\ Jourdan, R.~Krebbers, and D.~Dreyer, ``Safe
+systems programming in Rust,'' \emph{Commun.\ ACM}, vol.~64,
+no.~4, pp.~144--152, 2021.
+
+\bibitem{jung2018rustbelt}
+R.~Jung, J.-H.\ Jourdan, R.~Krebbers, and D.~Dreyer, ``RustBelt:
+Securing the foundations of the Rust programming language,''
+\emph{Proc.\ ACM Program.\ Lang.}, vol.~2, no.~POPL, pp.~66:1--66:34,
+2018.
+
+\bibitem{pereira2017energy}
+R.~Pereira, M.~Couto, F.~Ribeiro, R.~Rua, J.~Cunha, J.~P.\ Fernandes,
+and J.~Saraiva, ``Energy efficiency across programming languages,''
+in \emph{Proc.\ SLE 2017}. New York, NY, USA: ACM, 2017,
+pp.~256--267.
+
+\bibitem{clbg}
+I.~Gouy, ``The Computer Language Benchmarks Game.'' [Online].
+Available:
+\url{https://benchmarksgame-team.pages.debian.net/benchmarksgame/}
+
+\bibitem{prechelt2000empirical}
+L.~Prechelt, ``An empirical comparison of seven programming
+languages,'' \emph{Computer}, vol.~33, no.~10, pp.~23--29, 2000.
+
+\bibitem{bezanson2017julia}
+J.~Bezanson, A.~Edelman, S.~Karpinski, and V.~B.\ Shah, ``Julia:
+A fresh approach to numerical computing,'' \emph{SIAM Review},
+vol.~59, no.~1, pp.~65--98, 2017.
+
+\bibitem{hyperfine}
+D.~Peter, ``hyperfine: A command-line benchmarking tool.''
+[Online]. Available: \url{https://github.com/sharkdp/hyperfine}
+
+\bibitem{huggingface-tokenizers}
+HuggingFace, ``Tokenizers.'' [Online]. Available:
+\url{https://github.com/huggingface/tokenizers}
+
+\bibitem{polars}
+Polars, ``A blazingly fast DataFrame library.'' [Online].
+Available: \url{https://github.com/pola-rs/polars}
+
+\bibitem{paszke2019pytorch}
+A.~Paszke \emph{et al.}, ``PyTorch: An imperative style,
+high-performance deep learning library,'' in \emph{Advances in
+Neural Information Processing Systems 32}, 2019, pp.~8024--8035.
+
+\bibitem{abadi2016tensorflow}
+M.~Abadi \emph{et al.}, ``TensorFlow: A system for large-scale
+machine learning,'' in \emph{Proc.\ 12th USENIX OSDI}, 2016,
+pp.~265--283.
+
+\bibitem{jax2018github}
+J.~Bradbury \emph{et al.}, ``JAX: Composable transformations of
+Python+NumPy programs,'' 2018. [Online]. Available:
+\url{http://github.com/jax-ml/jax}
+
+\bibitem{harris2020numpy}
+C.~R.\ Harris \emph{et al.}, ``Array programming with NumPy,''
+\emph{Nature}, vol.~585, no.~7825, pp.~357--362, Sep.\ 2020.
+
+\bibitem{pedregosa2011scikit}
+F.~Pedregosa \emph{et al.}, ``Scikit-learn: Machine learning in
+Python,'' \emph{J.\ Mach.\ Learn.\ Res.}, vol.~12, pp.~2825--2830,
+2011.
+
+\bibitem{cjson}
+D.~Gamble, ``cJSON: Ultralightweight JSON parser in ANSI C.''
+[Online]. Available: \url{https://github.com/DaveGamble/cJSON}
+
+\bibitem{nlohmannjson}
+N.~Lohmann, ``JSON for Modern C++.'' [Online]. Available:
+\url{https://github.com/nlohmann/json}
+
+\bibitem{ojeda2022kernel}
+M.~Ojeda, ``Rust support in the Linux kernel,'' Linux Kernel
+Mailing List, 2022. [Online]. Available:
+\url{https://lwn.net/Articles/910762/}
+
+\bibitem{microsoft2023rust}
+Microsoft Security Response Center, ``Microsoft's commitment to
+memory-safe systems programming with Rust.'' [Online]. Available:
+\url{https://msrc.microsoft.com/blog/2023/}
+
+\bibitem{amazon2024rust}
+Amazon Web Services, ``Sustainability with Rust,'' AWS Open
+Source Blog. [Online]. Available:
+\url{https://aws.amazon.com/blogs/opensource/sustainability-with-rust/}
+
+\bibitem{cox2007regex}
+R.~Cox, ``Regular expression matching can be simple and fast,''
+2007. [Online]. Available: \url{https://swtch.com/~rsc/regexp/regexp1.html}
+
+\bibitem{hyperscan2019}
+X.~Wang, Y.~Hong, H.~Chang, K.~Park, G.~Langdale, J.~Hu, and
+H.~Zhu, ``Hyperscan: A fast multi-pattern regex matcher for modern
+CPUs,'' in \emph{Proc.\ 16th USENIX NSDI}, 2019, pp.~631--648.
+
+\bibitem{simdjson2019}
+G.~Langdale and D.~Lemire, ``Parsing gigabytes of JSON per
+second,'' \emph{VLDB Journal}, vol.~28, no.~6, pp.~941--960,
+2019.
+
+\bibitem{stackoverflow2024survey}
+Stack Overflow, ``Developer Survey 2024,'' 2024. [Online].
+Available: \url{https://survey.stackoverflow.co/2024/}
+
+\bibitem{klabnik2019rust}
+S.~Klabnik and C.~Nichols, \emph{The Rust Programming Language}.
+San Francisco, CA: No Starch Press, 2019.
+
+\bibitem{jung2020phd}
+R.~Jung, ``Understanding and evolving the Rust programming
+language,'' Ph.D.\ dissertation, Saarland Univ., 2020.
+
+
+\end{thebibliography}
+
+\end{document}

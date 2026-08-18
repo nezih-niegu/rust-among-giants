@@ -1,0 +1,151 @@
+{
+  "metric": "M3 binary size (bytes)",
+  "tool": "stat -f%z (macOS bytes)",
+  "notes": "julia has no compiled artifact (interpreted); reported as null. Java reports the per-bench .class file; Kotlin reports the per-bench .jar including the bundled kotlin-stdlib.",
+  "results": [
+    {
+      "command": "c",
+      "bytes_per_bench": {
+        "b1_fibonacci": 33504,
+        "b2_bubble_sort": 33648,
+        "b3_matrix_mul": 50032,
+        "b4_monte_carlo": 33488,
+        "b5_regex": 34008,
+        "b6_file_io": 33944,
+        "b7_concurrent": 33744,
+        "b8_json_parse": 72592
+      },
+      "bytes_mean": 40620.0,
+      "bytes_min": 33488,
+      "bytes_max": 72592
+    },
+    {
+      "command": "cpp",
+      "bytes_per_bench": {
+        "b1_fibonacci": 36112,
+        "b2_bubble_sort": 36192,
+        "b3_matrix_mul": 52656,
+        "b4_monte_carlo": 36048,
+        "b5_regex": 113256,
+        "b6_file_io": 37768,
+        "b7_concurrent": 37968,
+        "b8_json_parse": 151040
+      },
+      "bytes_mean": 62630.0,
+      "bytes_min": 36048,
+      "bytes_max": 151040
+    },
+    {
+      "command": "rust",
+      "bytes_per_bench": {
+        "b1_fibonacci": 355872,
+        "b2_bubble_sort": 355280,
+        "b3_matrix_mul": 373408,
+        "b4_monte_carlo": 373344,
+        "b5_regex": 1593248,
+        "b6_file_io": 374064,
+        "b7_concurrent": 378320,
+        "b8_json_parse": 394880
+      },
+      "bytes_mean": 524802.0,
+      "bytes_min": 355280,
+      "bytes_max": 1593248
+    },
+    {
+      "command": "go",
+      "bytes_per_bench": {
+        "b1_fibonacci": 2493026,
+        "b2_bubble_sort": 2493090,
+        "b3_matrix_mul": 2509266,
+        "b4_monte_carlo": 2509234,
+        "b5_regex": 2898290,
+        "b6_file_io": 2510130,
+        "b7_concurrent": 2493234,
+        "b8_json_parse": 3075122
+      },
+      "bytes_mean": 2622674.0,
+      "bytes_min": 2493026,
+      "bytes_max": 3075122
+    },
+    {
+      "command": "java",
+      "bytes_per_bench": {
+        "b1_fibonacci": 607,
+        "b2_bubble_sort": 1215,
+        "b3_matrix_mul": 1158,
+        "b4_monte_carlo": 823,
+        "b5_regex": 1137,
+        "b6_file_io": 1763,
+        "b7_concurrent": 1500,
+        "b8_json_parse": 3895
+      },
+      "bytes_mean": 1512.25,
+      "bytes_min": 607,
+      "bytes_max": 3895
+    },
+    {
+      "command": "zig",
+      "bytes_per_bench": {
+        "b1_fibonacci": 52880,
+        "b2_bubble_sort": 52832,
+        "b3_matrix_mul": 69584,
+        "b4_monte_carlo": 69136,
+        "b5_regex": 53064,
+        "b6_file_io": 69992,
+        "b7_concurrent": 53488,
+        "b8_json_parse": 128448
+      },
+      "bytes_mean": 68678.0,
+      "bytes_min": 52832,
+      "bytes_max": 128448
+    },
+    {
+      "command": "swift",
+      "bytes_per_bench": {
+        "b1_fibonacci": 53472,
+        "b2_bubble_sort": 52992,
+        "b3_matrix_mul": 53536,
+        "b4_monte_carlo": 52336,
+        "b5_regex": 54728,
+        "b6_file_io": 55144,
+        "b7_concurrent": 51744,
+        "b8_json_parse": 55328
+      },
+      "bytes_mean": 53660.0,
+      "bytes_min": 51744,
+      "bytes_max": 55328
+    },
+    {
+      "command": "kotlin",
+      "bytes_per_bench": {
+        "b1_fibonacci": 5516391,
+        "b2_bubble_sort": 5516537,
+        "b3_matrix_mul": 5516999,
+        "b4_monte_carlo": 5516687,
+        "b5_regex": 5516943,
+        "b6_file_io": 5517425,
+        "b7_concurrent": 5517061,
+        "b8_json_parse": 5519018
+      },
+      "bytes_mean": 5517132.625,
+      "bytes_min": 5516391,
+      "bytes_max": 5519018
+    },
+    {
+      "command": "julia",
+      "bytes_per_bench": {
+        "b1_fibonacci": null,
+        "b2_bubble_sort": null,
+        "b3_matrix_mul": null,
+        "b4_monte_carlo": null,
+        "b5_regex": null,
+        "b6_file_io": null,
+        "b7_concurrent": null,
+        "b8_json_parse": null
+      },
+      "bytes_mean": null,
+      "bytes_min": null,
+      "bytes_max": null
+    }
+  ]
+}

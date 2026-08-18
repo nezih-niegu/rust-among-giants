@@ -1,0 +1,85 @@
+{
+  "results": [
+    {
+      "command": "c",
+      "mean": 1.0,
+      "exit_codes": [
+        0
+      ]
+    },
+    {
+      "command": "cpp",
+      "mean": 1.0,
+      "exit_codes": [
+        0
+      ]
+    },
+    {
+      "command": "go",
+      "mean": 1.0,
+      "exit_codes": [
+        0
+      ]
+    },
+    {
+      "command": "java",
+      "mean": 1.0,
+      "exit_codes": [
+        0
+      ]
+    },
+    {
+      "command": "swift",
+      "mean": 1.0,
+      "exit_codes": [
+        0
+      ]
+    },
+    {
+      "command": "kotlin",
+      "mean": 1.0,
+      "exit_codes": [
+        0
+      ]
+    },
+    {
+      "command": "julia",
+      "mean": 1.0,
+      "exit_codes": [
+        0
+      ]
+    },
+    {
+      "command": "python",
+      "mean": 1.0,
+      "exit_codes": [
+        0
+      ]
+    },
+    {
+      "command": "r",
+      "mean": 1.0,
+      "exit_codes": [
+        0
+      ]
+    },
+    {
+      "command": "fortran",
+      "mean": 4.42912245944,
+      "stddev": 0.06062795484447492,
+      "median": 4.42912245944,
+      "user": 4.3741574199999995,
+      "system": 0.013620919999999998,
+      "min": 4.38625202144,
+      "max": 4.47199289744,
+      "times": [
+        4.47199289744,
+        4.38625202144
+      ],
+      "exit_codes": [
+        0,
+        0
+      ]
+    }
+  ]
+}

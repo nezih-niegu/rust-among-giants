@@ -1,0 +1,52 @@
+{
+  "metric": "M5 cold-build wall time (seconds, total per language for all 8 benchmarks)",
+  "tool": "time.perf_counter wrapping subprocess.run on the build command",
+  "notes": "Per-language totals rather than per-benchmark because Rust and Zig share dependency compilation across benchmarks \u2014 per-benchmark figures would be dominated by where each dep happened to land in the build order. The total cold-build measurement matches the developer-experience claim of the M5 metric (cargo clean / make clean / zig cache wipe between runs).",
+  "results": [
+    {
+      "command": "c",
+      "compile_time_s": 0.706,
+      "notes": "make -j1 all (clean), 8 benches"
+    },
+    {
+      "command": "cpp",
+      "compile_time_s": 4.308,
+      "notes": "make -j1 all (clean), 8 benches"
+    },
+    {
+      "command": "rust",
+      "compile_time_s": 13.017,
+      "notes": "cargo build --release (clean, includes regex/serde_json deps)"
+    },
+    {
+      "command": "go",
+      "compile_time_s": 3.636,
+      "notes": "go clean -cache + per-bench go build, 8 benches"
+    },
+    {
+      "command": "java",
+      "compile_time_s": 2.37,
+      "notes": "javac per file (clean), 8 benches"
+    },
+    {
+      "command": "zig",
+      "compile_time_s": 5.61,
+      "notes": "zig build (clean cache), 8 benches whole-project"
+    },
+    {
+      "command": "swift",
+      "compile_time_s": 3.006,
+      "notes": "swiftc -O per file (clean), 8 benches"
+    },
+    {
+      "command": "kotlin",
+      "compile_time_s": 23.59,
+      "notes": "kotlinc per file with -include-runtime (clean), 8 benches"
+    },
+    {
+      "command": "julia",
+      "compile_time_s": null,
+      "notes": "interpreted; no AOT compile step (JIT cost included in M1 wall time)"
+    }
+  ]
+}

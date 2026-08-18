@@ -1,0 +1,142 @@
+{
+  "metric": "M4 lines of code (implementation only)",
+  "tool": "wc -l",
+  "notes": "Counts the per-benchmark implementation file only. Excludes vendored deps (benchmarks/c/vendor/cJSON.{c,h} and benchmarks/cpp/vendor/json.hpp for B8), build manifests (Cargo.toml, Makefile, build.zig), and any shared/utility code. Comments and blank lines are counted as in any wc-based LOC measurement \u2014 relative ranking across languages is what matters, not absolute style-corrected SLOC.",
+  "results": [
+    {
+      "command": "c",
+      "loc_per_bench": {
+        "b1_fibonacci": 14,
+        "b2_bubble_sort": 33,
+        "b3_matrix_mul": 43,
+        "b4_monte_carlo": 30,
+        "b5_regex": 35,
+        "b6_file_io": 44,
+        "b7_concurrent": 32,
+        "b8_json_parse": 71
+      },
+      "loc_mean": 37.75,
+      "loc_total": 302
+    },
+    {
+      "command": "cpp",
+      "loc_per_bench": {
+        "b1_fibonacci": 10,
+        "b2_bubble_sort": 18,
+        "b3_matrix_mul": 23,
+        "b4_monte_carlo": 19,
+        "b5_regex": 15,
+        "b6_file_io": 28,
+        "b7_concurrent": 13,
+        "b8_json_parse": 43
+      },
+      "loc_mean": 21.125,
+      "loc_total": 169
+    },
+    {
+      "command": "rust",
+      "loc_per_bench": {
+        "b1_fibonacci": 8,
+        "b2_bubble_sort": 19,
+        "b3_matrix_mul": 21,
+        "b4_monte_carlo": 15,
+        "b5_regex": 16,
+        "b6_file_io": 31,
+        "b7_concurrent": 14,
+        "b8_json_parse": 33
+      },
+      "loc_mean": 19.625,
+      "loc_total": 157
+    },
+    {
+      "command": "go",
+      "loc_per_bench": {
+        "b1_fibonacci": 11,
+        "b2_bubble_sort": 16,
+        "b3_matrix_mul": 25,
+        "b4_monte_carlo": 17,
+        "b5_regex": 14,
+        "b6_file_io": 19,
+        "b7_concurrent": 15,
+        "b8_json_parse": 33
+      },
+      "loc_mean": 18.75,
+      "loc_total": 150
+    },
+    {
+      "command": "java",
+      "loc_per_bench": {
+        "b1_fibonacci": 10,
+        "b2_bubble_sort": 20,
+        "b3_matrix_mul": 19,
+        "b4_monte_carlo": 15,
+        "b5_regex": 13,
+        "b6_file_io": 22,
+        "b7_concurrent": 15,
+        "b8_json_parse": 87
+      },
+      "loc_mean": 25.125,
+      "loc_total": 201
+    },
+    {
+      "command": "zig",
+      "loc_per_bench": {
+        "b1_fibonacci": 11,
+        "b2_bubble_sort": 23,
+        "b3_matrix_mul": 28,
+        "b4_monte_carlo": 15,
+        "b5_regex": 47,
+        "b6_file_io": 31,
+        "b7_concurrent": 16,
+        "b8_json_parse": 41
+      },
+      "loc_mean": 26.5,
+      "loc_total": 212
+    },
+    {
+      "command": "swift",
+      "loc_per_bench": {
+        "b1_fibonacci": 6,
+        "b2_bubble_sort": 12,
+        "b3_matrix_mul": 38,
+        "b4_monte_carlo": 14,
+        "b5_regex": 10,
+        "b6_file_io": 17,
+        "b7_concurrent": 11,
+        "b8_json_parse": 28
+      },
+      "loc_mean": 17.0,
+      "loc_total": 136
+    },
+    {
+      "command": "kotlin",
+      "loc_per_bench": {
+        "b1_fibonacci": 5,
+        "b2_bubble_sort": 14,
+        "b3_matrix_mul": 19,
+        "b4_monte_carlo": 13,
+        "b5_regex": 8,
+        "b6_file_io": 18,
+        "b7_concurrent": 9,
+        "b8_json_parse": 63
+      },
+      "loc_mean": 18.625,
+      "loc_total": 149
+    },
+    {
+      "command": "julia",
+      "loc_per_bench": {
+        "b1_fibonacci": 6,
+        "b2_bubble_sort": 18,
+        "b3_matrix_mul": 43,
+        "b4_monte_carlo": 29,
+        "b5_regex": 20,
+        "b6_file_io": 26,
+        "b7_concurrent": 21,
+        "b8_json_parse": 27
+      },
+      "loc_mean": 23.75,
+      "loc_total": 190
+    }
+  ]
+}

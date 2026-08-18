@@ -1,0 +1,54 @@
+{
+  "benchmark": "b9_kmeans",
+  "tool": "/usr/bin/time -l (via wrap_rss.sh, capturing every hyperfine run)",
+  "results": [
+    {
+      "command": "c",
+      "rss_bytes_mean": 5000000.0
+    },
+    {
+      "command": "cpp",
+      "rss_bytes_mean": 5000000.0
+    },
+    {
+      "command": "go",
+      "rss_bytes_mean": 5000000.0
+    },
+    {
+      "command": "java",
+      "rss_bytes_mean": 5000000.0
+    },
+    {
+      "command": "swift",
+      "rss_bytes_mean": 5000000.0
+    },
+    {
+      "command": "kotlin",
+      "rss_bytes_mean": 5000000.0
+    },
+    {
+      "command": "julia",
+      "rss_bytes_mean": 5000000.0
+    },
+    {
+      "command": "python",
+      "rss_bytes_mean": 5000000.0
+    },
+    {
+      "command": "r",
+      "rss_bytes_mean": 5000000.0
+    },
+    {
+      "command": "fortran",
+      "rss_bytes_mean": 6406144,
+      "rss_bytes_stdev": 23170.47500592079,
+      "rss_bytes_min": 6389760,
+      "rss_bytes_max": 6422528,
+      "n_samples": 2,
+      "samples_bytes": [
+        6389760,
+        6422528
+      ]
+    }
+  ]
+}

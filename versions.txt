@@ -1,0 +1,30 @@
+# Pinned toolchain versions used in the paper.
+# These match the data in paper/main.tex Table I (systems suite).
+# The AI-kernel suite additionally uses Fortran (gfortran), Python, and R; COBOL retired.
+# Re-running brew install without a pin picks up the latest formula;
+# values below are what was active when the headline results were captured.
+
+# OS
+macOS                 26.0 (Tahoe)  # Darwin 25.3.0 ARM64
+
+# Apple toolchain (xcode-select --install)
+Apple Clang           17.0.0
+Swift                 6.2.4
+
+# Homebrew formulae
+go                    1.26.3
+zig@0.14              0.14.1
+openjdk               26.0.1        # provides javac and java
+kotlin                2.3.21        # invokes the bundled kotlinc + JVM
+julia                 1.9.2
+gfortran              (Homebrew gcc 14)   # AI suite: -O3 -ffp-contract=off
+r                     4.x                # AI suite scientific tier (Rscript)
+hyperfine             1.20.0
+
+# Rustup channel
+rust (stable)         1.93.0        # 2024 edition
+
+# Python (analysis/plots only; no benchmark depends on Python)
+python                3.13.x        # use system or pyenv
+numpy                 (see requirements.txt)
+matplotlib            (see requirements.txt)
